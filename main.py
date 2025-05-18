@@ -28,8 +28,8 @@ app = FastAPI()
 
 
 # ---------- ENDPOINTS ----------
-@app.get("/health")
-def health():
+@app.api_route("/health", methods=["GET", "HEAD"])
+def health(request: Request):
     return {"ok": True}
 
 
