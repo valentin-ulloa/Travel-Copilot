@@ -15,6 +15,7 @@ from twilio.rest import Client
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timedelta
+import traceback
 import os
 
 # Carga .env si está en local (no afecta a Railway)
@@ -120,19 +121,27 @@ def compute_next_check(dep: datetime) -> datetime:
     return now + timedelta(minutes=5)
 
 def run_due_checks():
-    now_iso = datetime.utcnow().isoformat()
-    due = sb.table("trips") \
-            .select("id,departure_date") \
-            .lte("next_check_at", now_iso) \
-            .execute().data
-    for trip in due:
-        dep = datetime.fromisoformat(trip["departure_date"])
-        # TODO: llamar AeroAPI + enviar notificaciones si cambia status...
-        next_time = compute_next_check(dep)
-        sb.table("trips") \
-          .update({"next_check_at": next_time.isoformat()}) \
-          .eq("id", trip["id"]) \
-          .execute()
+    try:
+        now_iso = datetime.utcnow().isoformat()
+        due = sb.table("trips") \
+                .select("id,departure_date") \
+                .lte("next_check_at", now_iso) \
+                .execute().data
+
+        for trip in due:
+            dep = datetime.fromisoformat(trip["departure_date"])
+            # TODO: llamada a AeroAPI + notificaciones…
+            next_time = compute_next_check(dep)
+            sb.table("trips") \
+              .update({"next_check_at": next_time.isoformat()}) \
+              .eq("id", trip["id"]) \
+              .execute()
+
+    except Exception as e:
+        # Imprime la traza completa en los logs de la app
+        print("🔥 Error en run_due_checks():", e)
+        print(traceback.format_exc())
+        # No relances la excepción para que el scheduler siga vivo
 
 @app.on_event("startup")
 def start_scheduler():
