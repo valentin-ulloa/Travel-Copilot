@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+supabase==2.1.1
+gotrue==2.4.3
+twilio==9.0.0
+python-dotenv
