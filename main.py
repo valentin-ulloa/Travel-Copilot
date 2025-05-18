@@ -13,6 +13,8 @@ from datetime import datetime
 from supabase import create_client
 from twilio.rest import Client
 from dotenv import load_dotenv
+from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime
 import os
 
 # Carga .env si está en local (no afecta a Railway)
@@ -102,3 +104,45 @@ async def trip_created(req: Request):
 
     sent = send_confirmation(trip["id"])
     return {"sent": sent}
+
+# ─── Scheduler interno con APScheduler ───
+def compute_next_check(dep: datetime) -> datetime:
+    now = datetime.utcnow()
+    rem = dep - now
+    if rem > timedelta(hours=40):
+        return dep - timedelta(hours=40)
+    if rem > timedelta(hours=12):
+        return now + timedelta(hours=10)
+    if rem > timedelta(hours=3):
+        return now + timedelta(hours=3)
+    if rem > timedelta(hours=1):
+        return now + timedelta(minutes=15)
+    return now + timedelta(minutes=5)
+
+def run_due_checks():
+    now = datetime.utcnow().isoformat()
+    due = sb.table("trips")\
+            .select("id,departure_date")\
+            .lte("next_check_at", now)\
+            .execute().data
+    for trip in due:
+        dep = datetime.fromisoformat(trip["departure_date"])
+        # 1) Aquí va tu lógica AeroAPI + notificaciones…
+        # 2) Actualizas next_check_at según compute_next_check
+        next_time = compute_next_check(dep)
+        sb.table("trips")\
+          .update({"next_check_at": next_time.isoformat()})\
+          .eq("id", trip["id"])\
+          .execute()
+
+@app.on_event("startup")
+def start_scheduler():
+    scheduler = BackgroundScheduler()
+    # Ejecuta run_due_checks cada 5 minutos
+    scheduler.add_job(run_due_checks, 'interval', minutes=5, next_run_time=datetime.utcnow())
+    scheduler.start()
+    app.state.scheduler = scheduler
+
+@app.on_event("shutdown")
+def shutdown_scheduler():
+    app.state.scheduler.shutdown()
