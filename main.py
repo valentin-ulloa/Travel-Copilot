@@ -8,12 +8,11 @@
 #   SUPABASE_URL, SUPABASE_KEY
 #   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_NUMBER
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from datetime import datetime
 from supabase import create_client
 from twilio.rest import Client
 from dotenv import load_dotenv
-from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timedelta
 import traceback
 import os
@@ -153,14 +152,10 @@ def run_due_checks():
           .eq("id", trip["id"]) \
           .execute()
 
-
-@app.on_event("startup")
-def start_scheduler():
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(run_due_checks, 'interval', minutes=5, next_run_time=datetime.utcnow())
-    scheduler.start()
-    app.state.scheduler = scheduler
-
-@app.on_event("shutdown")
-def shutdown_scheduler():
-    app.state.scheduler.shutdown()
+@app.post("/supabase/poll_flight")
+async def poll_flight(background_tasks: BackgroundTasks):
+    """
+    Desencadena un ciclo de run_due_checks() en background.
+    """
+    background_tasks.add_task(run_due_checks)
+    return {"status": "scheduled"}
