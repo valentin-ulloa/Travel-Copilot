@@ -92,32 +92,36 @@ def send_confirmation(trip_id: int) -> int:
     return sent
 
 
+Copiar
 def send_update(trip_id: int, flight_info: dict) -> int:
     trip = sb.table("trips").select("*").eq("id", trip_id).single().execute().data
     if not trip:
         print(f"⚠️ No se encontró el viaje con id {trip_id}")
         return 0
+    
     rows = sb.table("trip_travelers").select(
         "is_captain, traveler:travelers(id,name,whatsapp_number)"
     ).eq("trip_id", trip_id).execute().data
+    
     if not rows:
         print(f"⚠️ No se encontraron viajeros para el viaje con id {trip_id}")
         return 0
+    
     dep_dt = datetime.fromisoformat(trip["departure_date"]).replace(tzinfo=None)
     dep_str = dep_dt.strftime("%d %b %H:%M")
     status = flight_info.get("status")
     details = f"Vuelo {trip['title']} ({trip['flight_number']}) programado para {dep_str}"
-    print(f"DEBUG: Intentando enviar mensaje con - Name: {t['name'] or 'viajero'}, Status: {status}, Details: {details}")
     sent = 0
     for row in rows:
         t = row["traveler"]
+        print(f"DEBUG: Intentando enviar mensaje con - Name: {t['name'] or 'viajero'}, Status: {status}, Details: {details}")
         try:
             msg = tw.messages.create(
                 content_sid=templates["flight_update"]["es"],
                 content_variables={
-                    "1": str(t["name"] or "viajero"),  # Asegurar que sea string
-                    "2": str(status or "Unknown"),     # Asegurar que sea string
-                    "3": str(details)                  # Asegurar que sea string
+                    "1": str(t["name"] or "viajero"),
+                    "2": str(status or "Unknown"),
+                    "3": str(details)
                 },
                 from_=os.environ["TWILIO_WHATSAPP_NUMBER"],
                 to=f"whatsapp:{t['whatsapp_number']}"
