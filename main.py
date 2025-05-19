@@ -9,12 +9,10 @@
 #   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_NUMBER
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
-from datetime import datetime
 from supabase import create_client
 from twilio.rest import Client
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-import traceback
 import os
 
 # Carga .env si está en local (no afecta a Railway)
@@ -62,10 +60,12 @@ def send_confirmation(trip_id: int) -> int:
         return 0
 
     # 3) Texto
-    dep_date = datetime.fromisoformat(trip["departure_date"]).strftime("%d %b %H:%M")
-    base = (f"✈️ Hola {{name}}! Tu viaje *{trip['title']}* "
-            f"({trip['flight_number']}) sale el {dep_date}. "
-            "Te avisaremos cualquier cambio. ¡Buen vuelo!")
+    dep_date = dep.strftime("%d %b %H:%M")
+    base = (
+        f"✈️ Hola {{name}}! Tu viaje *{trip['title']}* "
+        f"({trip['flight_number']}) sale el {dep_date}. "
+        "Te avisaremos cualquier cambio. ¡Buen vuelo!"
+    )
 
     count = 0
     for row in rows:
@@ -106,8 +106,7 @@ async def trip_created(req: Request):
     return {"sent": sent}
 
 # ─── Scheduler interno con APScheduler ───
-def compute_next_check(dep: datetime) -> datetime:
-    now = datetime.utcnow()
+def compute_next_check(dep: datetime, now: datetime) -> datetime:
     rem = dep - now
     if rem > timedelta(hours=40):
         return dep - timedelta(hours=40)
@@ -120,37 +119,41 @@ def compute_next_check(dep: datetime) -> datetime:
     return now + timedelta(minutes=5)
 
 def run_due_checks():
-    now_iso = datetime.utcnow().isoformat()
+    try:
+        now = datetime.utcnow()
+        now_iso = now.isoformat()
 
-    # 1) Viajes nuevos (next_check_at IS NULL)
-    due_null = (
-        sb.table("trips")
-          .select("id,departure_date")
-          .is_("next_check_at", None)
-          .execute()
-          .data
-    ) or []
+        # 1) Viajes nuevos
+        due_null = (
+            sb.table("trips")
+              .select("id,departure_date")
+              .is_("next_check_at", None)
+              .execute().data
+        ) or []
 
-    # 2) Viajes programados (next_check_at ≤ ahora)
-    due_due = (
-        sb.table("trips")
-          .select("id,departure_date")
-          .lte("next_check_at", now_iso)
-          .execute()
-          .data
-    ) or []
+        # 2) Viajes programados
+        due_due = (
+            sb.table("trips")
+              .select("id,departure_date")
+              .lte("next_check_at", now_iso)
+              .execute().data
+        ) or []
 
-    # 3) Unimos y eliminamos duplicados por id
-    todos = {t["id"]: t for t in (due_null + due_due)}.values()
+        # 3) Unir sin duplicados
+        todos = {t["id"]: t for t in (due_null + due_due)}.values()
 
-    # 4) Para cada viaje pendiente, calculamos y actualizamos next_check_at
-    for trip in todos:
-        dep = datetime.fromisoformat(trip["departure_date"])
-        next_time = compute_next_check(dep)
-        sb.table("trips") \
-          .update({"next_check_at": next_time.isoformat()}) \
-          .eq("id", trip["id"]) \
-          .execute()
+        # 4) Actualizar cada trip
+        for trip in todos:
+            dep = datetime.fromisoformat(trip["departure_date"]).replace(tzinfo=None)
+            next_time = compute_next_check(dep, now)
+            sb.table("trips") \
+              .update({"next_check_at": next_time.isoformat()}) \
+              .eq("id", trip["id"]) \
+              .execute()
+
+    except Exception as e:
+        print("🔥 Error en run_due_checks():", e)
+        # Aquí no relanzamos la excepción para que n8n no vea error 500
 
 @app.post("/supabase/poll_flight")
 async def poll_flight(background_tasks: BackgroundTasks):
