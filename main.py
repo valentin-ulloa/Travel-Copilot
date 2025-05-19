@@ -161,106 +161,10 @@ def fetch_flight_status(flight_number: str, departure_iso: str) -> dict:
         raise RuntimeError(f"No flights data for {flight_number} on {start_date}")
     return flights[0]
 
-def log_flight_event(trip_id: int, event_type: str, metadata: dict) -> None:(trip_id: int, event_type: str, metadata: dict) -> None:
+def log_flight_event(trip_id: int, event_type: str, metadata: dict) -> None:
+    """Registra un evento de vuelo en la tabla flight_events."""
     sb.table("flight_events").insert({
         "trip_id": trip_id,
         "event": event_type,
         "metadata": metadata
     }).execute()
-
-
-# ---------- Orquestación de polling ----------
-
-def compute_next_check(dep: datetime, now: datetime) -> datetime:
-    """
-    Decide cuándo debe ser el siguiente chequeo dinámico.
-    """
-    rem = dep - now
-    if rem > timedelta(hours=40):
-        return dep - timedelta(hours=40)
-    if rem > timedelta(hours=12):
-        return now + timedelta(hours=10)
-    if rem > timedelta(hours=3):
-        return now + timedelta(hours=3)
-    if rem > timedelta(hours=1):
-        return now + timedelta(minutes=15)
-    return now + timedelta(minutes=5)
-
-async def run_due_checks():
-    """
-    Chequea todos los vuelos nuevos o programados, obtiene estado de AeroAPI,
-    notifica si hay cambios y reprograma next_check_at.
-    """
-    try:
-        now = datetime.utcnow()
-        now_iso = now.isoformat()
-
-        # 1) Viajes nuevos (next_check_at IS NULL)
-        due_null = (
-            sb.table("trips")
-              .select("id,departure_date,flight_number")
-              .filter("next_check_at", "is", "null")
-              .execute()
-              .data
-        ) or []
-
-        # 2) Viajes programados (next_check_at ≤ ahora)
-        due_due = (
-            sb.table("trips")
-              .select("id,departure_date,flight_number")
-              .lte("next_check_at", now_iso)
-              .execute()
-              .data
-        ) or []
-
-        # 3) Unión sin duplicados
-        todos = {t["id"]: t for t in (due_null + due_due)}.values()
-
-        # 4) Procesar cada viaje
-        for trip in todos:
-            dep_dt = datetime.fromisoformat(trip["departure_date"]).replace(tzinfo=None)
-
-            # Llamada a AeroAPI con start y end
-            try:
-                start_ts = int(dep_dt.timestamp()) - 3600  # 1h antes
-                end_ts = int(dep_dt.timestamp()) + 3600   # 1h después
-                resp = client.get(
-                    f"/flights/{trip['flight_number']}",
-                    params={"ident_type": "designator", "start": start_ts, "end": end_ts}
-                )
-                resp.raise_for_status()
-                data = resp.json().get("flights") or []
-                if not data:
-                    raise ValueError(f"No flights data for {trip['flight_number']}")
-                flight_info = data[0]
-            except Exception as e:
-                print(f"⚠️ AeroAPI fetch failed for {trip['flight_number']}: {e}")
-                # Reprogramar sencillo +15m y continuar
-                next_time = now + timedelta(minutes=15)
-                sb.table("trips").update({"next_check_at": next_time.isoformat()})\
-                  .eq("id", trip["id"])\
-                  .execute()
-                continue
-
-            # 5) Comparar con último estado
-            last = sb.table("flight_events") \
-                     .select("metadata") \
-                     .eq("trip_id", trip["id"]) \
-                     .order("created_at", desc=True) \
-                     .limit(1) \
-                     .execute().data
-            prev_status = last[0]["metadata"].get("status") if last else None
-            status = flight_info.get("status")
-            if status != prev_status:
-                send_update(trip["id"], flight_info)
-                log_flight_event(trip["id"], "status_change", {"status": status})
-
-            # 6) Reprogramar siguiente chequeo dinámico
-            next_time = compute_next_check(dep_dt, now)
-            sb.table("trips") \
-              .update({"next_check_at": next_time.isoformat()}) \
-              .eq("id", trip["id"]) \
-              .execute()
-
-    except Exception as e:
-        print("🔥 Error en run_due_checks():", e)
