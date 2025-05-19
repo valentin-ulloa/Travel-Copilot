@@ -123,29 +123,31 @@ def run_due_checks():
         now = datetime.utcnow()
         now_iso = now.isoformat()
 
-        # 1) Viajes nuevos
+        # 1) Viajes nuevos (next_check_at IS NULL)
         due_null = (
             sb.table("trips")
               .select("id,departure_date")
-              .is_("next_check_at", None)
-              .execute().data
+              .filter("next_check_at", "is", "null")    # <- aquí
+              .execute()
+              .data
         ) or []
 
-        # 2) Viajes programados
+        # 2) Viajes programados (next_check_at ≤ ahora)
         due_due = (
             sb.table("trips")
               .select("id,departure_date")
               .lte("next_check_at", now_iso)
-              .execute().data
+              .execute()
+              .data
         ) or []
 
-        # 3) Unir sin duplicados
+        # 3) Unimos y quitamos duplicados
         todos = {t["id"]: t for t in (due_null + due_due)}.values()
 
-        # 4) Actualizar cada trip
+        # 4) Reprogramamos each trip
         for trip in todos:
-            dep = datetime.fromisoformat(trip["departure_date"]).replace(tzinfo=None)
-            next_time = compute_next_check(dep, now)
+            dep_dt = datetime.fromisoformat(trip["departure_date"]).replace(tzinfo=None)
+            next_time = compute_next_check(dep_dt, now)
             sb.table("trips") \
               .update({"next_check_at": next_time.isoformat()}) \
               .eq("id", trip["id"]) \
@@ -153,7 +155,6 @@ def run_due_checks():
 
     except Exception as e:
         print("🔥 Error en run_due_checks():", e)
-        # Aquí no relanzamos la excepción para que n8n no vea error 500
 
 @app.post("/supabase/poll_flight")
 async def poll_flight(background_tasks: BackgroundTasks):
