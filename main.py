@@ -109,7 +109,7 @@ def fetch_flight_status(flight_number: str, departure_iso: str) -> dict:
     dep_dt = datetime.fromisoformat(departure_iso).replace(tzinfo=None)
     start_date = dep_dt.strftime("%Y-%m-%d")
     resp = client.get(
-        f"/flights/{flight_number}?ident_type=designator&startDate={start_date}"
+        f"/flights/{flight_number}?ident_type=designator&start={start_date}"
     )
     resp.raise_for_status()
     data = resp.json().get("flights") or []
