@@ -58,12 +58,10 @@ from fastapi.responses import JSONResponse
 @app.post("/supabase/poll_flight")
 async def poll_flight():
     """
-    Desencadena run_due_checks() y devuelve cualquier error para debugging.
+    Dispara un ciclo de chequeo de estado de vuelo y devuelve cualquier error.
     """
     try:
-        # Ejecutar de forma síncrona para capturar errores
         run_due_checks()
         return {"status": "completed"}
     except Exception as e:
-        # Devolver error JSON para facilitar debugging
         return JSONResponse(status_code=500, content={"error": str(e)})
