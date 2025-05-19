@@ -123,22 +123,36 @@ def compute_next_check(dep: datetime) -> datetime:
 def run_due_checks():
     now_iso = datetime.utcnow().isoformat()
 
-    # Trae trips con next_check_at IS NULL  o  next_check_at ≤ ahora
-    due = (
+    # 1) Viajes nuevos (next_check_at IS NULL)
+    due_null = (
         sb.table("trips")
           .select("id,departure_date")
-          .or_(f"next_check_at.is.null,next_check_at.lte.{now_iso}")
+          .is_("next_check_at", None)
           .execute()
           .data
     ) or []
 
-    for trip in due:
+    # 2) Viajes programados (next_check_at ≤ ahora)
+    due_due = (
+        sb.table("trips")
+          .select("id,departure_date")
+          .lte("next_check_at", now_iso)
+          .execute()
+          .data
+    ) or []
+
+    # 3) Unimos y eliminamos duplicados por id
+    todos = {t["id"]: t for t in (due_null + due_due)}.values()
+
+    # 4) Para cada viaje pendiente, calculamos y actualizamos next_check_at
+    for trip in todos:
         dep = datetime.fromisoformat(trip["departure_date"])
         next_time = compute_next_check(dep)
         sb.table("trips") \
           .update({"next_check_at": next_time.isoformat()}) \
           .eq("id", trip["id"]) \
           .execute()
+
 
 @app.on_event("startup")
 def start_scheduler():
