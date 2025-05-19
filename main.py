@@ -121,10 +121,9 @@ def compute_next_check(dep: datetime) -> datetime:
     return now + timedelta(minutes=5)
 
 def run_due_checks():
-    # 1) Momento actual en ISO
     now_iso = datetime.utcnow().isoformat()
 
-    # 2) Traer trips con next_check_at NULL o ≤ ahora
+    # Trae trips con next_check_at IS NULL  o  next_check_at ≤ ahora
     due = (
         sb.table("trips")
           .select("id,departure_date")
@@ -133,11 +132,9 @@ def run_due_checks():
           .data
     ) or []
 
-    # 3) Para cada trip pendiente, reprogramar next_check_at
     for trip in due:
         dep = datetime.fromisoformat(trip["departure_date"])
         next_time = compute_next_check(dep)
-
         sb.table("trips") \
           .update({"next_check_at": next_time.isoformat()}) \
           .eq("id", trip["id"]) \
