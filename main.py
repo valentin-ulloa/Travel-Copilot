@@ -186,4 +186,5 @@ async def poll_flight():
         run_due_checks()
         return {"status": "completed"}
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        print(f"🔥 Error en run_due_checks(): {e}")
+        raise HTTPException(status_code=500, detail=str(e))
