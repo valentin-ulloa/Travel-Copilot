@@ -122,18 +122,18 @@ def send_update(trip_id: int, flight_info: dict) -> int:
         return 0
     
     status = flight_info.get("status", "Unknown")
-    details = f"Vuelo para {dep_str}"
-    print(f"DEBUG: Valores enviados - Name: {t['name'] or 'viajero'}, Status: {status}, Details: {details}")
+    details = f"Vuelo {trip['flight_number']} programado para {dep_str}"
     sent = 0
     for row in rows:
         t = row["traveler"]
+        print(f"DEBUG: Intentando enviar mensaje con - Name: {t['name'] or 'viajero'}, Status: {status}, Details: {details}")
         try:
             msg = tw.messages.create(
                 content_sid=templates["flight_update"]["es"],
                 content_variables={
-                    "1": str(t["name"] or "viajero")[:100],  # Limitar a 100 caracteres
-                    "2": str(status)[:100],                # Limitar a 100 caracteres
-                    "3": str(details)[:900]                # Limitar a 900 caracteres
+                    "1": str(t["name"] or "viajero")[:100],
+                    "2": str(status)[:100],
+                    "3": str(details)[:900]
                 },
                 from_=os.environ["TWILIO_WHATSAPP_NUMBER"],
                 to=f"whatsapp:{t['whatsapp_number']}"
