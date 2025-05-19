@@ -91,25 +91,37 @@ def send_confirmation(trip_id: int) -> int:
         sent += 1
     return sent
 
-
-Copiar
 def send_update(trip_id: int, flight_info: dict) -> int:
-    trip = sb.table("trips").select("*").eq("id", trip_id).single().execute().data
+    try:
+        trip = sb.table("trips").select("*").eq("id", trip_id).single().execute().data
+    except Exception as e:
+        print(f"⚠️ Error al buscar el viaje con id {trip_id}: {e}")
+        return 0
+    
     if not trip:
         print(f"⚠️ No se encontró el viaje con id {trip_id}")
         return 0
     
-    rows = sb.table("trip_travelers").select(
-        "is_captain, traveler:travelers(id,name,whatsapp_number)"
-    ).eq("trip_id", trip_id).execute().data
+    try:
+        rows = sb.table("trip_travelers").select(
+            "is_captain, traveler:travelers(id,name,whatsapp_number)"
+        ).eq("trip_id", trip_id).execute().data
+    except Exception as e:
+        print(f"⚠️ Error al buscar viajeros para el viaje con id {trip_id}: {e}")
+        return 0
     
     if not rows:
         print(f"⚠️ No se encontraron viajeros para el viaje con id {trip_id}")
         return 0
     
-    dep_dt = datetime.fromisoformat(trip["departure_date"]).replace(tzinfo=None)
-    dep_str = dep_dt.strftime("%d %b %H:%M")
-    status = flight_info.get("status")
+    try:
+        dep_dt = datetime.fromisoformat(trip["departure_date"]).replace(tzinfo=None)
+        dep_str = dep_dt.strftime("%d %b %H:%M")
+    except Exception as e:
+        print(f"⚠️ Error al procesar departure_date para el viaje con id {trip_id}: {e}")
+        return 0
+    
+    status = flight_info.get("status", "Unknown")
     details = f"Vuelo {trip['title']} ({trip['flight_number']}) programado para {dep_str}"
     sent = 0
     for row in rows:
@@ -120,7 +132,7 @@ def send_update(trip_id: int, flight_info: dict) -> int:
                 content_sid=templates["flight_update"]["es"],
                 content_variables={
                     "1": str(t["name"] or "viajero"),
-                    "2": str(status or "Unknown"),
+                    "2": str(status),
                     "3": str(details)
                 },
                 from_=os.environ["TWILIO_WHATSAPP_NUMBER"],
