@@ -31,6 +31,29 @@ client = httpx.Client(
 
 app = FastAPI()
 
+templates = {
+    "confirmation": {
+        "en": os.environ["TWILIO_TEMPLATE_CONFIRMATION_EN"],
+        "es": os.environ["TWILIO_TEMPLATE_CONFIRMATION_ES"]
+    },
+    "reminder_24h": {
+        "en": os.environ["TWILIO_TEMPLATE_REMINDER_24H_EN"],
+        "es": os.environ["TWILIO_TEMPLATE_REMINDER_24H_ES"]
+    },
+    "boarding": {
+        "en": os.environ["TWILIO_TEMPLATE_BOARDING_EN"],
+        "es": os.environ["TWILIO_TEMPLATE_BOARDING_ES"]
+    },
+    "flight_update": {
+        "en": os.environ["TWILIO_TEMPLATE_FLIGHT_UPDATE_EN"],
+        "es": os.environ["TWILIO_TEMPLATE_FLIGHT_UPDATE_ES"]
+    },
+    "reminder_checkin": {
+        "en": os.environ["TWILIO_TEMPLATE_REMINDER_CHECKIN_EN"],
+        "es": os.environ["TWILIO_TEMPLATE_REMINDER_CHECKIN_ES"]
+    }
+}
+
 # ---------- Funciones de negocio ----------
 
 def send_confirmation(trip_id: int) -> int:
@@ -72,39 +95,46 @@ def send_confirmation(trip_id: int) -> int:
 def send_update(trip_id: int, flight_info: dict) -> int:
     trip = sb.table("trips").select("*").eq("id", trip_id).single().execute().data
     if not trip:
+        print(f"⚠️ No se encontró el viaje con id {trip_id}")
         return 0
     rows = sb.table("trip_travelers").select(
         "is_captain, traveler:travelers(id,name,whatsapp_number)"
     ).eq("trip_id", trip_id).execute().data
     if not rows:
+        print(f"⚠️ No se encontraron viajeros para el viaje con id {trip_id}")
         return 0
     dep_dt = datetime.fromisoformat(trip["departure_date"]).replace(tzinfo=None)
     dep_str = dep_dt.strftime("%d %b %H:%M")
     status = flight_info.get("status")
-    template = (
-        f"✈️ Actualización: tu vuelo *{trip['title']}* "
-        f"({trip['flight_number']}) programado para {dep_str} "
-        f"tiene nuevo estado *{status}*."
-    )
+    details = f"Vuelo {trip['title']} ({trip['flight_number']}) programado para {dep_str}"
+    print(f"DEBUG: Intentando enviar mensaje con - Name: {t['name'] or 'viajero'}, Status: {status}, Details: {details}")
     sent = 0
     for row in rows:
         t = row["traveler"]
-        msg = tw.messages.create(
-            body=template,
-            from_=os.environ["TWILIO_WHATSAPP_NUMBER"],
-            to=f"whatsapp:{t['whatsapp_number']}"
-        )
-        sb.table("message_logs").insert({
-            "trip_id": trip_id,
-            "traveler_id": t["id"],
-            "template": "flight_update",
-            "status": msg.status,
-            "sid": msg.sid
-        }).execute()
-        sent += 1
+        try:
+            msg = tw.messages.create(
+                content_sid=templates["flight_update"]["es"],
+                content_variables={
+                    "1": str(t["name"] or "viajero"),  # Asegurar que sea string
+                    "2": str(status or "Unknown"),     # Asegurar que sea string
+                    "3": str(details)                  # Asegurar que sea string
+                },
+                from_=os.environ["TWILIO_WHATSAPP_NUMBER"],
+                to=f"whatsapp:{t['whatsapp_number']}"
+            )
+            sb.table("message_logs").insert({
+                "trip_id": trip_id,
+                "traveler_id": t["id"],
+                "template": "flight_update",
+                "status": msg.status,
+                "sid": msg.sid
+            }).execute()
+            print(f"✅ Mensaje flight_update enviado a {t['whatsapp_number']}: {msg.sid}")
+            sent += 1
+        except Exception as e:
+            print(f"⚠️ Error enviando mensaje flight_update a {t['whatsapp_number']}: {e}")
     return sent
-
-
+    
 def fetch_flight_status(flight_number: str, departure_iso: str) -> dict:
     dep_dt = datetime.fromisoformat(departure_iso).replace(tzinfo=None)
     start_date = dep_dt.strftime("%Y-%m-%d")
