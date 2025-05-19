@@ -5,3 +5,4 @@ gotrue==2.4.3
 twilio==9.0.0
 python-dotenv
 apscheduler
+httpx
