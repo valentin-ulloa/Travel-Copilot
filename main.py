@@ -121,27 +121,27 @@ def compute_next_check(dep: datetime) -> datetime:
     return now + timedelta(minutes=5)
 
 def run_due_checks():
-    try:
-        now_iso = datetime.utcnow().isoformat()
-        due = sb.table("trips") \
-                .select("id,departure_date") \
-                .lte("next_check_at", now_iso) \
-                .execute().data
+    # 1) Momento actual en ISO
+    now_iso = datetime.utcnow().isoformat()
 
-        for trip in due:
-            dep = datetime.fromisoformat(trip["departure_date"])
-            # TODO: llamada a AeroAPI + notificaciones…
-            next_time = compute_next_check(dep)
-            sb.table("trips") \
-              .update({"next_check_at": next_time.isoformat()}) \
-              .eq("id", trip["id"]) \
-              .execute()
+    # 2) Traer trips con next_check_at NULL o ≤ ahora
+    due = (
+        sb.table("trips")
+          .select("id,departure_date")
+          .or_(f"next_check_at.is.null,next_check_at.lte.{now_iso}")
+          .execute()
+          .data
+    ) or []
 
-    except Exception as e:
-        # Imprime la traza completa en los logs de la app
-        print("🔥 Error en run_due_checks():", e)
-        print(traceback.format_exc())
-        # No relances la excepción para que el scheduler siga vivo
+    # 3) Para cada trip pendiente, reprogramar next_check_at
+    for trip in due:
+        dep = datetime.fromisoformat(trip["departure_date"])
+        next_time = compute_next_check(dep)
+
+        sb.table("trips") \
+          .update({"next_check_at": next_time.isoformat()}) \
+          .eq("id", trip["id"]) \
+          .execute()
 
 @app.on_event("startup")
 def start_scheduler():
