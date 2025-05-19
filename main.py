@@ -127,20 +127,28 @@ def compute_next_check(dep: datetime, now: datetime) -> datetime:
 
 def run_due_checks():
     print(f"🔄 run_due_checks @ {datetime.utcnow().isoformat()}")
-    now = datetime.utcnow()
-    now_iso = now.isoformat()
 
     # 1) Viajes nuevos
-    due_null = sb.table("trips")\
-                 .select("id,departure_date,flight_number")\
-                 .is_("next_check_at", None)\
-                 .execute().data or []
+    due_null = (
+        sb.table("trips")
+          .select("id,departure_date,flight_number")
+          .is_("next_check_at", None)
+          .execute()
+          .data
+    ) or []
+    print("   ▶ due_null count:", len(due_null))
 
     # 2) Viajes programados
-    due_due = sb.table("trips")\
-                .select("id,departure_date,flight_number")\
-                .lte("next_check_at", now_iso)\
-                .execute().data or []
+    due_due = (
+        sb.table("trips")
+          .select("id,departure_date,flight_number")
+          .lte("next_check_at", datetime.utcnow().isoformat())
+          .execute()
+          .data
+    ) or []
+    print("   ▶ due_due count: ", len(due_due))
+    
+    # … resto de tu lógica …
 
     todos = {t["id"]: t for t in (due_null + due_due)}.values()
     print(f"👀 trips to check: {len(todos)} → {[t['id'] for t in todos]}")
