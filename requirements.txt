@@ -6,3 +6,6 @@ twilio==9.0.0
 python-dotenv
 apscheduler
 httpx
+uvicorn
+requests
+pydantic
