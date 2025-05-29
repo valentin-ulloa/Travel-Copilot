@@ -58,6 +58,7 @@ def whatsapp_webhook(
     From: str = Form(...),   # número de quien escribe
     Body: str = Form(...),   # texto del mensaje
 ):
+    print(f"----✅ Webhook recibido: From={From} Body={Body}")
     # 1) Decidir ruta
     if is_research_query(Body):
         # Ruta research
@@ -73,7 +74,7 @@ def whatsapp_webhook(
     
     # 2) Enviar respuesta por WhatsApp
     twilio_client.messages.create(
-        from_="whatsapp:"TWILIO_WHATSAPP,
+        from_=TWILIO_WHATSAPP,
         to=From,
         body=answer
     )
