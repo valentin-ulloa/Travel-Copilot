@@ -1,0 +1,7 @@
+# railway.toml
+[services]
+  [services.web]
+  # Comando para arrancar tu FastAPI
+  start = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+  # Ruta para comprobar que está vivo
+  healthcheckPath = "/docs"
