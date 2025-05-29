@@ -55,27 +55,34 @@ def is_research_query(text: str) -> bool:
 # Endpoint que Twilio llamará por cada mensaje de WhatsApp
 @app.post("/webhook")
 def whatsapp_webhook(
-    From: str = Form(...),   # número de quien escribe
-    Body: str = Form(...),   # texto del mensaje
+    From: str = Form(...),
+    Body: str = Form(...),
 ):
-    print(f"----✅ Webhook recibido: From={From} Body={Body}")
-    # 1) Decidir ruta
+    print(f"----✅ Webhook recibido: From={From!r} Body={Body!r}")
+    # Decide ruta
     if is_research_query(Body):
-        # Ruta research
-        resp = requests.post(
+        print("   ↳ Ruta: research")
+        r = requests.post(
             f"https://{os.getenv('RAILWAY_STATIC_URL')}/research",
             json={"question": Body},
-            headers={"Content-Type":"application/json"}
+            headers={"Content-Type": "application/json"}
         )
-        answer = resp.json()["answer"]
+        print("   ↳ /research status:", r.status_code, "body:", r.text[:200])
+        answer = r.json().get("answer", "")
     else:
-        # Ruta flight-status (placeholder)
+        print("   ↳ Ruta: flight-status (placeholder)")
         answer = "Lo siento, aún no manejo preguntas de vuelo aquí."
-    
-    # 2) Enviar respuesta por WhatsApp
-    twilio_client.messages.create(
-        from_=TWILIO_WHATSAPP,
-        to=From,
-        body=answer
-    )
-    return {"status":"ok"}
+
+    # Intenta enviar con Twilio
+    try:
+        print(f"----✉️ Enviando WhatsApp a {From}: {answer!r}")
+        msg = twilio_client.messages.create(
+            from_=TWILIO_WHATSAPP,
+            to=From,
+            body=answer
+        )
+        print(f"----✅ Outbound Twilio SID: {msg.sid}")
+    except Exception as e:
+        print(f"----❌ Error al enviar con Twilio: {type(e).__name__} – {e}")
+
+    return {"status": "ok"}
