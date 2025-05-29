@@ -1,59 +1,42 @@
-import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from supabase import create_client
+import os
+import requests
 
-# —————————————————————————————————————————————
-# 1) Inicialización del cliente Supabase
-#    Levanta las vars directamente desde el entorno de Railway.
-# —————————————————————————————————————————————
-try:
-    SUPABASE_URL = os.environ["SUPABASE_URL"]
-    SUPABASE_KEY = os.environ["SUPABASE_KEY"]
-except KeyError as e:
-    raise RuntimeError(f"Falta la variable de entorno {e}") from e
+app = FastAPI()
 
-sb = create_client(SUPABASE_URL, SUPABASE_KEY)
+class ResearchRequest(BaseModel):
+    question: str
 
-# —————————————————————————————————————————————
-# 2) Creación de la app FastAPI
-# —————————————————————————————————————————————
-app = FastAPI(title="Travel Copilot v0")
+class ResearchResponse(BaseModel):
+    answer: str
 
+@app.post("/research", response_model=ResearchResponse)
+def research(req: ResearchRequest):
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(500, "Falta OPENAI_API_KEY en las variables de entorno")
 
-# —————————————————————————————————————————————
-# 3) Modelo de entrada
-# —————————————————————————————————————————————
-class TripIn(BaseModel):
-    agency_id: str
-    client_name: str
-    whatsapp: str               # "+5491112345678"
-    flight_number: str          # "AR1234"
-    origin_iata: str            # "EZE"
-    destination_iata: str       # "JFK"
-    departure_date: str         # ISO 8601
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": "Eres un asistente de viajes experto."},
+            {"role": "user", "content": req.question}
+        ]
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
 
+    resp = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        json=payload,
+        headers=headers
+    )
+    if resp.status_code != 200:
+        raise HTTPException(resp.status_code, resp.text)
 
-# —————————————————————————————————————————————
-# 4) Healthcheck
-# —————————————————————————————————————————————
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-
-
-# —————————————————————————————————————————————
-# 5) Endpoint POST /trips
-#    Inserta un viaje en la tabla `trips`
-# —————————————————————————————————————————————
-@app.post("/trips", status_code=201)
-async def create_trip(trip: TripIn):
-    payload = trip.dict()
-    try:
-        res = sb.table("trips").insert(payload).execute()
-    except Exception as e:
-        # Error de conexión, permisos, etc.
-        raise HTTPException(status_code=500, detail=f"Supabase insert error: {e}")
-    # Asumimos que si no hay excepción, res.data existe
-    trip_id = res.data[0]["id"]
-    return {"id": trip_id, "status": "created"}
+    data = resp.json()
+    answer = data["choices"][0]["message"]["content"]
+    return {"answer": answer}
