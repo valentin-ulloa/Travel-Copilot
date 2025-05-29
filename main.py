@@ -59,16 +59,26 @@ def whatsapp_webhook(
     Body: str = Form(...),
 ):
     print(f"----✅ Webhook recibido: From={From!r} Body={Body!r}")
+
     # Decide ruta
     if is_research_query(Body):
         print("   ↳ Ruta: research")
+
         r = requests.post(
             f"https://{os.getenv('RAILWAY_STATIC_URL')}/research",
             json={"question": Body},
             headers={"Content-Type": "application/json"}
         )
         print("   ↳ /research status:", r.status_code, "body:", r.text[:200])
-        answer = r.json().get("answer", "")
+
+        # ⬇️  Fallback por si OpenAI falla
+        if r.status_code == 200:
+            answer = r.json().get("answer", "").strip()
+            if not answer:
+                answer = "Lo siento, no pude obtener la información ahora. Inténtalo más tarde."
+        else:
+            answer = "Lo siento, hubo un problema al buscar la información. Inténtalo más tarde."
+
     else:
         print("   ↳ Ruta: flight-status (placeholder)")
         answer = "Lo siento, aún no manejo preguntas de vuelo aquí."
