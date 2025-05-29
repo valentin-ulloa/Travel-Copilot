@@ -73,7 +73,7 @@ def whatsapp_webhook(
     
     # 2) Enviar respuesta por WhatsApp
     twilio_client.messages.create(
-        from_=TWILIO_WHATSAPP,
+        from_="whatsapp:"TWILIO_WHATSAPP,
         to=From,
         body=answer
     )
