@@ -9,3 +9,4 @@ httpx
 uvicorn
 requests
 pydantic
+python-multipart
