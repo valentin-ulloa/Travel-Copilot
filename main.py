@@ -16,7 +16,7 @@ SUPABASE_KEY        = os.getenv("SUPABASE_KEY")
 TWILIO_ACCOUNT_SID  = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN   = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_WHATSAPP     = os.getenv("TWILIO_WHATSAPP_NUMBER")
-SYSTEM_PROMPT       = os.getenv("SYSTEM_PROMPT")  # ← añade en Railway
+SYSTEM_PROMPT       = os.getenv("SYSTEM_PROMPT") 
 
 required = [
     OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY,
@@ -67,7 +67,7 @@ def get_user_trip(phone_number: str) -> Dict[str, Any]:
 
 def is_research_query(text: str) -> bool:
     lo = text.strip().lower()
-    if "vuelo" in lo:            # cualquier mención a “vuelo” → rama flight-status
+    if "vuelo" in lo:          
         return False
     return "?" in lo or lo.startswith(("qué", "cómo", "dónde", "cuándo", "por qué", "cual"))
 
@@ -101,13 +101,13 @@ def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
                  if r.status_code == 200 else \
                  "Lo siento, hubo un problema al buscar la información."
     else:
-        # ── 2) Consulta Supabase directamente
+       
         trip = get_user_trip(From)
         if "error" in trip:
             answer = ("¡Hola! No encuentro tu reserva. "
                       "¿Me compartes tu número de vuelo o localizador?")
         else:
-            # ── 3) Construye prompt con contexto + pregunta del usuario
+          
             user_ctx = (
                 f"Eres el asistente de {trip['client_name']}. "
                 f"Vuelo {trip['flight_number']} de {trip['origin_iata']} "
@@ -125,7 +125,7 @@ def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
             ).json()
             answer = resp["choices"][0]["message"]["content"]
 
-    # ── 4) Envía la respuesta por WhatsApp
+
     try:
         twilio_client.messages.create(from_=TWILIO_WHATSAPP, to=From, body=answer)
     except Exception as e:
