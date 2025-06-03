@@ -9,18 +9,6 @@ from pydantic import BaseModel
 from supabase import create_client, Client as SupabaseClient
 from twilio.rest import Client as TwilioClient
 
-# ------------------------------
-# CARGAR VARIABLES DE ENTORNO
-# ------------------------------
-
-# Asegurate de tener un .env o variables configuradas en Railway:
-#   OPENAI_API_KEY
-#   SUPABASE_URL
-#   SUPABASE_KEY
-#   TWILIO_ACCOUNT_SID
-#   TWILIO_AUTH_TOKEN
-#   TWILIO_WHATSAPP_NUMBER
-
 OPENAI_API_KEY      = os.getenv("OPENAI_API_KEY")
 SUPABASE_URL        = os.getenv("SUPABASE_URL")
 SUPABASE_KEY        = os.getenv("SUPABASE_KEY")
@@ -31,16 +19,10 @@ TWILIO_WHATSAPP     = os.getenv("TWILIO_WHATSAPP_NUMBER")
 if not (OPENAI_API_KEY and SUPABASE_URL and SUPABASE_KEY and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_WHATSAPP):
     raise RuntimeError("Faltan variables de entorno. Revisa tu .env o tu configuración en Railway.")
 
-# ------------------------------
-# INICIALIZAR CLIENTES
-# ------------------------------
 
 supabase: SupabaseClient = create_client(SUPABASE_URL, SUPABASE_KEY)
 twilio_client: TwilioClient = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-# ------------------------------
-# MODELOS POCO A POCO
-# ------------------------------
 
 class ResearchRequest(BaseModel):
     question: str
