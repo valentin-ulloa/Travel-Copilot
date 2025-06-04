@@ -289,7 +289,7 @@ def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
         hist_resp = supabase.table("conversations") \
             .select("role, message") \
             .eq("trip_id", trip_id) \
-            .order("created_at", {"ascending": True}) \
+            .order("created_at", ascending=True) \
             .limit(15) \
             .execute()
         history = hist_resp.data or []
