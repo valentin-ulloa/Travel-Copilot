@@ -21,7 +21,6 @@ TWILIO_AUTH_TOKEN   = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_WHATSAPP     = os.getenv("TWILIO_WHATSAPP_NUMBER")
 SYSTEM_PROMPT       = os.getenv("SYSTEM_PROMPT")
 AEROAPI_KEY         = os.getenv("AEROAPI_KEY")
-RAILWAY_STATIC_URL  = os.getenv("RAILWAY_STATIC_URL")
 
 required = [
     OPENAI_API_KEY,
@@ -214,18 +213,18 @@ def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
         )
         return {"reply": "Número inválido"}
 
-         # 1) Obtener o no el viaje del usuario
+    # 1) Intentar obtener el viaje del usuario
     trip = get_user_trip(From)
     trip_id = trip.get("id") if "error" not in trip else None
 
-    # 2) Guardar mensaje de usuario
+    # 2) Guardar mensaje de usuario en conversations
     insert_conversation_record(phone, "user", Body, trip_id)
 
-    # 3) Branch research vs vuelo
+    # 3) Si es consulta de research
     if is_research_query(Body):
         try:
             r = requests.post(
-                f"https://{RAILWAY_STATIC_URL}/research",
+                f"https://{os.getenv('RAILWAY_STATIC_URL')}/research",
                 json={"question": Body},
                 headers={"Content-Type": "application/json"},
                 timeout=15
@@ -284,51 +283,22 @@ def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
             twilio_client.messages.create(from_=TWILIO_WHATSAPP, to=From, body=answer)
             return {"reply": answer}
 
-    # 5) Recuperar los últimos 15 mensajes (con indentación correcta)
-    if trip_id:
-        hist_resp = supabase.table("conversations") \
-            .select("role, message") \
-            .eq("trip_id", trip_id) \
-            .order("created_at", True) \
-            .limit(15) \
-            .execute()
-        history = hist_resp.data or []
-    else:
-        history = []
-
-    # 6) Construir el contexto con historial
+    # 5) Usuario ya registrado (o recién asociado): llamamos a OpenAI
     descripcion = trip.get("passenger_description", "")
-    convo_text = ""
-    for r in history:
-        prefix = "Usuario:" if r["role"] == "user" else "Asistente:"
-        convo_text += f"{prefix} {r['message']}\n"
-
     user_ctx = f"Eres el asistente de {trip['client_name']}.\n"
     if descripcion:
         user_ctx += f"Perfil: {descripcion}\n"
     user_ctx += (
         f"Vuelo {trip['flight_number']} de {trip['origin_iata']} "
         f"a {trip['destination_iata']}, programado {trip['departure_date']}. "
-        f"Estado actual: {trip['status']}.\n"
+        f"Estado actual: {trip['status']}."
     )
-    user_ctx += "Historial de conversación (últimos 15 turnos):\n" + convo_text
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT + "\n" + user_ctx},
         {"role": "user", "content": Body}
     ]
-    try:
-        resp = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            json={"model": "gpt-4o-mini", "messages": messages},
-            headers=HEADERS,
-            timeout=15
-        )
-        resp.raise_for_status()
-        answer = resp.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        logging.error(f"OpenAI error: {e}")
-        answer = "Lo siento, algo falló al conectar con OpenAI."
+    answer = openai_chat(messages)
 
     insert_conversation_record(phone, "assistant", answer, trip_id)
     try:
