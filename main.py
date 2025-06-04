@@ -217,6 +217,17 @@ def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
     trip = get_user_trip(From)
     trip_id = trip.get("id") if "error" not in trip else None
 
+    if trip_id:
+    hist_resp = supabase.table("conversations") \
+        .select("role, message") \
+        .eq("trip_id", trip_id) \
+        .order("created_at", {"ascending": True}) \
+        .limit(15) \
+        .execute()
+    history = hist_resp.data or []
+else:
+    history = []
+
     # 2) Guardar mensaje de usuario en conversations
     insert_conversation_record(phone, "user", Body, trip_id)
 
