@@ -21,6 +21,7 @@ TWILIO_AUTH_TOKEN   = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_WHATSAPP     = os.getenv("TWILIO_WHATSAPP_NUMBER")
 SYSTEM_PROMPT       = os.getenv("SYSTEM_PROMPT")
 AEROAPI_KEY         = os.getenv("AEROAPI_KEY")
+RAILWAY_STATIC_URL  = os.getenv("RAILWAY_STATIC_URL")
 
 required = [
     OPENAI_API_KEY,
@@ -213,96 +214,33 @@ def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
         )
         return {"reply": "Número inválido"}
 
-        # 1) Obtener o no el viaje del usuario
+         # 1) Obtener o no el viaje del usuario
     trip = get_user_trip(From)
     trip_id = trip.get("id") if "error" not in trip else None
 
-    if trip_id:
-    hist_resp = supabase.table("conversations") \
-        .select("role, message") \
-        .eq("trip_id", trip_id) \
-        .order("created_at", {"ascending": True}) \
-        .limit(15) \
-        .execute()
-    history = hist_resp.data or []
-else:
-    history = []
-
-    # 2) Guardar mensaje de usuario en conversations
+    # 2) Guardar mensaje de usuario
     insert_conversation_record(phone, "user", Body, trip_id)
 
-    # 3) Si es consulta de research
+    # 3) Branch research vs vuelo
     if is_research_query(Body):
         try:
             r = requests.post(
-                f"https://{os.getenv('RAILWAY_STATIC_URL')}/research",
+                f"https://{RAILWAY_STATIC_URL}/research",
                 json={"question": Body},
                 headers={"Content-Type": "application/json"},
-                timeout=10
+                timeout=15
             )
             if r.status_code == 200:
                 answer = r.json().get("answer", "Lo siento, no pude obtener respuesta.")
             else:
                 answer = "Lo siento, hubo un problema al buscar la información."
-        except Exception:
+        except Exception as e:
+            logging.error(f"Research endpoint error: {e}")
             answer = "Lo siento, hubo un problema al buscar la información."
 
         insert_conversation_record(phone, "assistant", answer, trip_id)
         twilio_client.messages.create(from_=TWILIO_WHATSAPP, to=From, body=answer)
         return {"reply": answer}
-
-    if not trip_id:
-        posible_flight = detect_flight_pattern(Body)
-        if posible_flight:
-            found = find_today_trip_by_flight(posible_flight)
-            if found:
-                exito = associate_phone_to_trip(found["id"], phone)
-                if exito:
-                    trip = {
-                        "id": found["id"],
-                        "client_name": found["client_name"],
-                        "flight_number": found["flight_number"],
-                        "origin_iata": found["origin_iata"],
-                        "destination_iata": found["destination_iata"],
-                        "departure_date": found["departure_date"],
-                        "status": found["status"],
-                        "passenger_description": found.get("passenger_description", "")
-                    }
-                    trip_id = trip["id"]
-                else:
-                    answer = (
-                        "¡Ups! Hubo un problema al asociar tu número con el vuelo. "
-                        "Por favor, inténtalo de nuevo más tarde."
-                    )
-                    insert_conversation_record(phone, "assistant", answer, None)
-                    twilio_client.messages.create(from_=TWILIO_WHATSAPP, to=From, body=answer)
-                    return {"reply": answer}
-            else:
-                answer = fetch_flight_status_from_aeroapi(posible_flight)
-                insert_conversation_record(phone, "assistant", answer, None)
-                twilio_client.messages.create(from_=TWILIO_WHATSAPP, to=From, body=answer)
-                return {"reply": answer}
-        else:
-            answer = (
-                "¡Hola! No encuentro tu reserva. "
-                "Por favor, compárteme tu número de vuelo (por ejemplo: 'AR1234') "
-                "o tu localizador para poder ayudarte."
-            )
-            insert_conversation_record(phone, "assistant", answer, None)
-            twilio_client.messages.create(from_=TWILIO_WHATSAPP, to=From, body=answer)
-            return {"reply": answer}
-
-    # ── 4) Recuperar los últimos 15 mensajes (con indentación correcta) ──
-    if trip_id:
-        hist_resp = supabase.table("conversations") \
-            .select("role, message") \
-            .eq("trip_id", trip_id) \
-            .order("created_at", {"ascending": True}) \
-            .limit(15) \
-            .execute()
-        history = hist_resp.data or []
-    else:
-        history = []
 
     # 4) Si el usuario no tiene viaje asociado, manejamos flight_number
     if not trip_id:
@@ -346,7 +284,19 @@ else:
             twilio_client.messages.create(from_=TWILIO_WHATSAPP, to=From, body=answer)
             return {"reply": answer}
 
-    # 5) Construir el contexto con historial
+    # 5) Recuperar los últimos 15 mensajes (con indentación correcta)
+    if trip_id:
+        hist_resp = supabase.table("conversations") \
+            .select("role, message") \
+            .eq("trip_id", trip_id) \
+            .order("created_at", {"ascending": True}) \
+            .limit(15) \
+            .execute()
+        history = hist_resp.data or []
+    else:
+        history = []
+
+    # 6) Construir el contexto con historial
     descripcion = trip.get("passenger_description", "")
     convo_text = ""
     for r in history:
@@ -372,16 +322,19 @@ else:
             "https://api.openai.com/v1/chat/completions",
             json={"model": "gpt-4o-mini", "messages": messages},
             headers=HEADERS,
-            timeout=10
-        ).json()
-        answer = resp["choices"][0]["message"]["content"]
-    except Exception:
+            timeout=15
+        )
+        resp.raise_for_status()
+        answer = resp.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        logging.error(f"OpenAI error: {e}")
         answer = "Lo siento, algo falló al conectar con OpenAI."
 
     insert_conversation_record(phone, "assistant", answer, trip_id)
     try:
         twilio_client.messages.create(from_=TWILIO_WHATSAPP, to=From, body=answer)
     except Exception as e:
+        logging.error(f"Twilio send error: {e}")
         raise HTTPException(500, f"Error al enviar WhatsApp: {e}")
 
     return {"reply": answer}
