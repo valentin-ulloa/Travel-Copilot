@@ -1,6 +1,7 @@
 import os
 import re
 import datetime
+import logging
 from typing import Dict, Any, Optional
 
 import requests
@@ -10,6 +11,8 @@ from supabase import create_client, Client as SupabaseClient
 from twilio.rest import Client as TwilioClient
 
 # ── ENV ────────────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO)
+
 OPENAI_API_KEY      = os.getenv("OPENAI_API_KEY")
 SUPABASE_URL        = os.getenv("SUPABASE_URL")
 SUPABASE_KEY        = os.getenv("SUPABASE_KEY")
@@ -82,8 +85,7 @@ def fetch_flight_status_from_aeroapi(flight_number: str) -> str:
     headers = {"x-api-key": AEROAPI_KEY, "Accept": "application/json"}
     try:
         resp = requests.get(url, headers=headers, timeout=10)
-        if resp.status_code != 200:
-            return f"AeroAPI devolvió error (código {resp.status_code})."
+        resp.raise_for_status()
         data = resp.json()
         vuelos = data.get("flights", [])
         if not vuelos:
@@ -99,6 +101,7 @@ def fetch_flight_status_from_aeroapi(flight_number: str) -> str:
                 pass
         return f"Estado del vuelo {flight_number}: {estado}.\nHora prevista de salida (UTC): {dep_sched}."
     except Exception as e:
+        logging.error(f"AeroAPI error: {e}")
         return f"Error al consultar AeroAPI: {e}"
 
 def get_user_trip(phone_number: str) -> Dict[str, Any]:
@@ -110,6 +113,7 @@ def get_user_trip(phone_number: str) -> Dict[str, Any]:
                 " departure_date, status, metadata, passenger_description"
             ).eq("whatsapp", phone).single().execute()
     except Exception as e:
+        logging.error(f"Supabase get_user_trip error: {e}")
         return {"error": f"Error Supabase: {e}"}
     data = resp.data or {}
     if not data:
@@ -130,7 +134,8 @@ def find_today_trip_by_flight(flight_number: str) -> Optional[Dict[str, Any]]:
             .eq("flight_number", flight_number) \
             .eq("departure_date", hoy) \
             .single().execute()
-    except Exception:
+    except Exception as e:
+        logging.error(f"Supabase find_today_trip_by_flight error: {e}")
         return None
     data = resp.data or {}
     return data if data else None
@@ -139,16 +144,37 @@ def associate_phone_to_trip(trip_id: str, new_phone: str) -> bool:
     try:
         supabase.table("trips").update({"whatsapp": new_phone}).eq("id", trip_id).execute()
         return True
-    except Exception:
+    except Exception as e:
+        logging.error(f"Supabase associate_phone_to_trip error: {e}")
         return False
 
 def insert_conversation_record(whatsapp: str, role: str, message: str, trip_id: Optional[str]) -> None:
-    supabase.table("conversations").insert({
-        "whatsapp": whatsapp,
-        "role": role,
-        "message": message,
-        "trip_id": trip_id
-    }).execute()
+    try:
+        supabase.table("conversations").insert({
+            "whatsapp": whatsapp,
+            "role": role,
+            "message": message,
+            "trip_id": trip_id
+        }).execute()
+    except Exception as e:
+        logging.error(f"Supabase insert_conversation_record error: {e}")
+
+def openai_chat(messages: list) -> str:
+    try:
+        logging.info("Llamando a OpenAI con payload: %s", messages)
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            json={"model": "gpt-4o-mini", "messages": messages},
+            headers=HEADERS,
+            timeout=15
+        )
+        resp.raise_for_status()
+        text = resp.json()["choices"][0]["message"]["content"]
+        logging.info("Respuesta de OpenAI: %s", text)
+        return text
+    except Exception as e:
+        logging.error(f"OpenAI error: {e}")
+        return "Lo siento, algo falló al conectar con OpenAI."
 
 # ── FASTAPI ────────────────────────────────────────────────────────────
 app = FastAPI()
@@ -166,7 +192,7 @@ def research(req: ResearchRequest):
         "https://api.openai.com/v1/chat/completions",
         json=payload,
         headers=HEADERS,
-        timeout=10
+        timeout=15
     )
     if resp.status_code != 200:
         raise HTTPException(resp.status_code, resp.text)
@@ -187,30 +213,35 @@ def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
         )
         return {"reply": "Número inválido"}
 
+    # 1) Intentar obtener el viaje del usuario
     trip = get_user_trip(From)
-    trip_id = trip["id"] if "error" not in trip else None
+    trip_id = trip.get("id") if "error" not in trip else None
 
+    # 2) Guardar mensaje de usuario en conversations
     insert_conversation_record(phone, "user", Body, trip_id)
 
+    # 3) Si es consulta de research
     if is_research_query(Body):
         try:
             r = requests.post(
                 f"https://{os.getenv('RAILWAY_STATIC_URL')}/research",
                 json={"question": Body},
                 headers={"Content-Type": "application/json"},
-                timeout=10
+                timeout=15
             )
             if r.status_code == 200:
                 answer = r.json().get("answer", "Lo siento, no pude obtener respuesta.")
             else:
                 answer = "Lo siento, hubo un problema al buscar la información."
-        except Exception:
+        except Exception as e:
+            logging.error(f"Research endpoint error: {e}")
             answer = "Lo siento, hubo un problema al buscar la información."
 
         insert_conversation_record(phone, "assistant", answer, trip_id)
         twilio_client.messages.create(from_=TWILIO_WHATSAPP, to=From, body=answer)
         return {"reply": answer}
 
+    # 4) Si el usuario no tiene viaje asociado, manejamos flight_number
     if not trip_id:
         posible_flight = detect_flight_pattern(Body)
         if posible_flight:
@@ -252,7 +283,7 @@ def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
             twilio_client.messages.create(from_=TWILIO_WHATSAPP, to=From, body=answer)
             return {"reply": answer}
 
-    # Usuario ya registrado (o recién asociado)
+    # 5) Usuario ya registrado (o recién asociado): llamamos a OpenAI
     descripcion = trip.get("passenger_description", "")
     user_ctx = f"Eres el asistente de {trip['client_name']}.\n"
     if descripcion:
@@ -267,19 +298,15 @@ def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
         {"role": "system", "content": SYSTEM_PROMPT + "\n" + user_ctx},
         {"role": "user", "content": Body}
     ]
-    try:
-        resp = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            json={"model": "gpt-4o-mini", "messages": messages},
-            headers=HEADERS,
-            timeout=10
-        ).json()
-        answer = resp["choices"][0]["message"]["content"]
-    except Exception:
-        answer = "Lo siento, algo falló al conectar con OpenAI."
+    answer = openai_chat(messages)
 
     insert_conversation_record(phone, "assistant", answer, trip_id)
-    twilio_client.messages.create(from_=TWILIO_WHATSAPP, to=From, body=answer)
+    try:
+        twilio_client.messages.create(from_=TWILIO_WHATSAPP, to=From, body=answer)
+    except Exception as e:
+        logging.error(f"Twilio send error: {e}")
+        raise HTTPException(500, f"Error al enviar WhatsApp: {e}")
+
     return {"reply": answer}
 
 if __name__ == "__main__":
